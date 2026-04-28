@@ -1,0 +1,22 @@
+{
+  "name": "owobot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "boxen": "^7.1.1",
+    "consola": "^3.2.3",
+    "debug": "^4.4.3",
+    "dotenv": "^16.4.5",
+    "discord.js-selfbot-v13": "^3.7.1",
+    "figlet": "^1.7.0",
+    "gradient-string": "^2.0.2"
+  }
+}
