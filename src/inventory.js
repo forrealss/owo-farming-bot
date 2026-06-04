@@ -71,19 +71,19 @@ function rarityFromName(emojiName) {
 }
 
 /**
- * Kirim "owo inv", tangkap response, kembalikan best gem per slot.
+ * Kirim "owo inv", tangkap response, kembalikan best gem per slot + deteksi lootbox.
  *
  * @param {import("discord.js-selfbot-v13").Client} client
  * @param {import("discord.js-selfbot-v13").TextChannel} channel
  * @param {number} timeoutMs
- * @returns {Promise<Map<number, number>>} Map<slotNumber, bestGemId>
+ * @returns {Promise<{ bestPerSlot: Map<number, number>, hasLootbox: boolean }>}
  */
 function fetchInventory(client, channel, timeoutMs = 8_000) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       client.removeListener("messageCreate", handler);
       consola.warn("Timeout — tidak ada response dari owo inv");
-      resolve(new Map());
+      resolve({ bestPerSlot: new Map(), hasLootbox: false });
     }, timeoutMs);
 
     const handler = (msg) => {
@@ -101,11 +101,13 @@ function fetchInventory(client, channel, timeoutMs = 8_000) {
       client.removeListener("messageCreate", handler);
 
       const bestPerSlot = parseBestGems(msg.content);
+      const hasLootbox = hasLootboxCheck(msg.content);
+
       consola.info(
-        { bestPerSlot: [...bestPerSlot].map(([s, id]) => `slot${s}=${id}`) },
-        "Gem terbaik per slot ditemukan",
+        { bestPerSlot: [...bestPerSlot].map(([s, id]) => `slot${s}=${id}`), hasLootbox },
+        "Inventory diproses",
       );
-      resolve(bestPerSlot);
+      resolve({ bestPerSlot, hasLootbox });
     };
 
     client.on("messageCreate", handler);
@@ -113,7 +115,7 @@ function fetchInventory(client, channel, timeoutMs = 8_000) {
       clearTimeout(timer);
       client.removeListener("messageCreate", handler);
       consola.error(err, "Gagal mengirim owo inv");
-      resolve(new Map());
+      resolve({ bestPerSlot: new Map(), hasLootbox: false });
     });
   });
 }
@@ -169,7 +171,37 @@ function parseBestGems(content) {
 }
 
 /**
- * Cek inventory → equip gem terkuat di setiap slot yang belum empowered.
+ * Cek apakah ada lootbox (ID 49 atau 50) di inventory.
+ *
+ * Format: `049`<:floot:...> atau `050`<:box:...>
+ *
+ * @param {string} content
+ * @returns {boolean}
+ */
+function hasLootboxCheck(content) {
+  const lootboxRegex = /`(049|050)`<a?:/;
+  return lootboxRegex.test(content);
+}
+
+/**
+ * Buka lootbox dengan "owo lb all".
+ *
+ * @param {import("discord.js-selfbot-v13").TextChannel} channel
+ * @returns {Promise<void>}
+ */
+async function openLootboxes(channel) {
+  try {
+    consola.info("📦 Membuka lootbox — owo lb all...");
+    await channel.send("owo lb all");
+    consola.success("📦 Lootbox dibuka!");
+    await delay(3_000);
+  } catch (err) {
+    consola.error(err, "Gagal membuka lootbox");
+  }
+}
+
+/**
+ * Cek inventory → equip gem + buka lootbox.
  *
  * @param {import("discord.js-selfbot-v13").Client} client
  * @param {import("discord.js-selfbot-v13").TextChannel} channel
@@ -182,8 +214,14 @@ async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
     "🔍 Memeriksa inventory...",
   );
 
-  const bestPerSlot = await fetchInventory(client, channel);
+  const { bestPerSlot, hasLootbox } = await fetchInventory(client, channel);
 
+  // ── Buka lootbox kalau ada ──
+  if (hasLootbox) {
+    await openLootboxes(channel);
+  }
+
+  // ── Equip gem ──
   if (bestPerSlot.size === 0) {
     consola.info("✅ Tidak ada gem di inventory (mungkin sudah di-equip)");
     return [];

@@ -98,6 +98,12 @@ client.once("ready", async () => {
       // Parse — best gem per slot
       const bestPerSlot = parseBestGems(response.content);
 
+      // Deteksi lootbox
+      const hasLootbox = /`(049|050)`<a?:/.test(response.content);
+      if (hasLootbox) {
+        console.log("\n📦 LOOTBOX TERDETEKSI — auto-buka 'owo lb all'");
+      }
+
       if (bestPerSlot.size === 0) {
         console.log("❌ Tidak ada gem ditemukan");
       } else {
