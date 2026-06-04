@@ -16,7 +16,7 @@ if (!DISCORD_TOKEN || !SERVER_ID || !CHANNEL_ID) {
 }
 
 // ---- Copy parseBestGems dari inventory.js untuk test mandiri ----
-const RARITY_RANK = { c: 0, u: 1, r: 2, e: 3, m: 4 };
+const RARITY_RANK = { c: 0, u: 1, r: 2, e: 3, m: 4, l: 5, f: 6 };
 
 function slotFromName(emojiName) {
   const m = emojiName.match(/gem(\d)/i);
@@ -24,7 +24,7 @@ function slotFromName(emojiName) {
 }
 
 function rarityFromName(emojiName) {
-  const m = emojiName.match(/^([curem])/i);
+  const m = emojiName.match(/^([curemlf])/i);
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -109,22 +109,24 @@ client.once("ready", async () => {
       } else {
         const rarityNames = {
           c: "Common ☆",
-          u: "Unique ⭐",
+          u: "Uncommon ⭐",
           r: "Rare ⭐⭐",
           e: "Epic ⭐⭐⭐",
-          m: "Mythic ⭐⭐⭐⭐",
+          m: "Mythical ⭐⭐⭐⭐",
+          l: "Legendary ⭐⭐⭐⭐⭐",
+          f: "Fabled ⭐⭐⭐⭐⭐⭐",
         };
 
         console.log("🏆 Gem Terkuat Per Slot:");
         const slots = [...bestPerSlot.keys()].sort((a, b) => a - b);
+        const ids = [];
         for (const slot of slots) {
           const { id, rarity } = bestPerSlot.get(slot);
+          ids.push(id);
           console.log(`  Slot ${slot}: Gem #${id} — ${rarityNames[rarity] || rarity}`);
         }
         console.log(`\n  Total: ${slots.length} slot siap di-equip`);
-        console.log(
-          `  Commands: ${slots.map((s) => `owo equip ${bestPerSlot.get(s).id}`).join(", ")}`,
-        );
+        console.log(`  Multi-equip command: owo equip ${ids.join(" ")}`);
       }
     }
   } catch (err) {

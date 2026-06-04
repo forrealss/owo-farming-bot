@@ -40,13 +40,15 @@ const GEM_IDS = new Set([
 
 /**
  * Rarity ranking — semakin tinggi, semakin kuat.
- *   c = common  ☆
- *   u = unique  ⭐
- *   r = rare    ⭐⭐
- *   e = epic    ⭐⭐⭐
- *   m = mythic  ⭐⭐⭐⭐
+ *   c = common    ☆
+ *   u = uncommon  ⭐
+ *   r = rare      ⭐⭐
+ *   e = epic      ⭐⭐⭐
+ *   m = mythical  ⭐⭐⭐⭐
+ *   l = legendary ⭐⭐⭐⭐⭐
+ *   f = fabled    ⭐⭐⭐⭐⭐⭐
  */
-const RARITY_RANK = { c: 0, u: 1, r: 2, e: 3, m: 4 };
+const RARITY_RANK = { c: 0, u: 1, r: 2, e: 3, m: 4, l: 5, f: 6 };
 
 /**
  * Tentukan slot number dari emoji name.
@@ -66,7 +68,7 @@ function slotFromName(emojiName) {
  * @returns {string|null}
  */
 function rarityFromName(emojiName) {
-  const m = emojiName.match(/^([curem])/i);
+  const m = emojiName.match(/^([curemlf])/i);
   return m ? m[1].toLowerCase() : null;
 }
 
@@ -243,16 +245,24 @@ async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
   );
 
   const equipped = [];
-  for (const slot of slots) {
-    const gemId = bestPerSlot.get(slot);
-    try {
-      await channel.send(`owo equip ${gemId}`);
-      consola.success({ slot, id: gemId }, `💎 Slot ${slot} → Gem #${gemId} di-equip`);
-      await delay(2_000);
-      equipped.push(String(gemId));
-    } catch (err) {
-      consola.error({ slot, id: gemId, err: err.message }, "Gagal equip gem");
-    }
+
+  // Multi-equip: kirim semua ID dalam 1 command
+  const multiequipIds = slots.map((slot) => bestPerSlot.get(slot));
+  const multiequipCmd = `owo equip ${multiequipIds.join(" ")}`;
+
+  try {
+    await channel.send(multiequipCmd);
+    consola.success(
+      { slots, ids: multiequipIds },
+      `💎 Multi-equip ${slots.length} slot → ${multiequipIds.join(", ")}`,
+    );
+    await delay(2_000);
+    equipped.push(...multiequipIds.map(String));
+  } catch (err) {
+    consola.error(
+      { slots, ids: multiequipIds, err: err.message },
+      "Gagal multi-equip gem",
+    );
   }
 
   return equipped;
