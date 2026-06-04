@@ -25,7 +25,6 @@ function loadConfig() {
     token,
     serverId,
     channelId,
-    // Default farming parameters — bisa di-extend via env nanti
     messages: ["owoh", "owob"],
     minDelayMs: 15_000,
     maxDelayMs: 25_000,
