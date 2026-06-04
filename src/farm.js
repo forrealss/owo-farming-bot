@@ -1,5 +1,5 @@
 const { consola } = require("./logger");
-const { checkAndEquipGems, parseEmpoweredSlots } = require("./inventory");
+const { checkAndEquipGems, parseEmpowered } = require("./inventory");
 
 /**
  * Pola-pola yang menandakan Owo bot mendeteksi botting.
@@ -22,42 +22,6 @@ function isBotDetection(content) {
 }
 
 /**
- * Tangkap response Owo setelah mengirim pesan farming.
- * Filter: bot, reply ke pesan kita, atau mengandung "empowered".
- *
- * @param {import("discord.js-selfbot-v13").Client} client
- * @param {import("discord.js-selfbot-v13").TextChannel} channel
- * @param {string} referenceId - message ID dari pesan yang kita kirim
- * @param {number} timeoutMs
- * @returns {Promise<string|null>} Content response atau null kalau timeout
- */
-function captureOwoResponse(client, channel, referenceId, timeoutMs = 6_000) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      client.removeListener("messageCreate", handler);
-      resolve(null);
-    }, timeoutMs);
-
-    const handler = (msg) => {
-      if (msg.channel.id !== channel.id) return;
-      if (!msg.author.bot) return;
-
-      const isReply = msg.reference?.messageId === referenceId;
-      const mentionsUser = msg.mentions?.users?.has(client.user.id);
-      const looksLikeHunt = msg.content.includes("empowered");
-
-      if (!isReply && !mentionsUser && !looksLikeHunt) return;
-
-      clearTimeout(timer);
-      client.removeListener("messageCreate", handler);
-      resolve(msg.content);
-    };
-
-    client.on("messageCreate", handler);
-  });
-}
-
-/**
  * Jalankan farming loop.
  *
  * @param {import("discord.js-selfbot-v13").Client} client
@@ -71,9 +35,9 @@ function startFarming(client, channel, options) {
   let timer = null;
   let cycleCount = 0;
 
-  // Track empowered count — re-check inventory ONLY when a gem expires (count drops)
-  let lastEmpoweredCount = -1; // -1 = belum pernah, force check di siklus pertama
+  let lastEmpoweredCount = -1;
   let skipInventory = false;
+  let starActive = false; // tracked from owoh response
 
   const formatTime = (date) => date.toLocaleString();
   const getRandomDelay = () =>
@@ -104,21 +68,13 @@ function startFarming(client, channel, options) {
     consola.warn("Farming STOPPED.");
   }
 
-  // ── Equip gem kalau ada slot kosong ──
+  // ── Equip gem + star ──
   async function equipEmptySlots(empoweredSlots) {
-    const missing = 4 - empoweredSlots.size;
-    if (missing === 0) {
-      consola.debug("Semua 4 slot sudah empowered — skip inventory");
-      return;
-    }
-
+    const missing = [1, 2, 3, 4].filter((s) => !empoweredSlots.has(s));
     consola.info({ missing }, "Slot kosong terdeteksi — cek inventory...");
 
     try {
-      const equipped = await checkAndEquipGems(client, channel, empoweredSlots);
-      if (equipped.length > 0) {
-        await delay(3_000);
-      }
+      await checkAndEquipGems(client, channel, empoweredSlots, starActive);
     } catch (err) {
       consola.error(err, "Gagal cek inventory");
     }
@@ -130,25 +86,43 @@ function startFarming(client, channel, options) {
 
     cycleCount++;
 
-    // Kirim pesan pertama (owoh) — tangkap response-nya
-    let empoweredSlots = new Set();
+    // Kirim "owoh" — parse empowered line
     try {
       const sentMsg = await channel.send(messages[0]);
       consola.info({ at: formatTime(new Date()), msg: messages[0] }, "Pesan terkirim");
 
-      // Tangkap response dari Owo (ada "empowered" di text)
-      const owohResponse = await captureOwoResponse(client, channel, sentMsg.id, 5_000);
+      // Tunggu response OwO
+      let owohContent = null;
+      const start = Date.now();
+      const timeout = 10_000;
+      const msgHandler = (msg) => {
+        if (msg.channel.id !== channel.id) return;
+        if (!msg.author.bot) return;
+        if (
+          msg.reference?.messageId === sentMsg.id ||
+          msg.content.includes("empowered") ||
+          msg.content.includes("hunt is")
+        ) {
+          owohContent = msg.content;
+        }
+      };
 
-      if (owohResponse) {
-        empoweredSlots = parseEmpoweredSlots(owohResponse);
+      client.on("messageCreate", msgHandler);
+
+      while (!owohContent && Date.now() - start < timeout) {
+        await delay(300);
+      }
+
+      client.removeListener("messageCreate", msgHandler);
+
+      if (owohContent) {
+        const { slots: empoweredSlots, starActive: sa } = parseEmpowered(owohContent);
         const currentCount = empoweredSlots.size;
 
-        consola.debug(
-          { empowered: [...empoweredSlots], count: currentCount },
-          "Slot empowered terdeteksi dari owoh",
-        );
+        // Update star status
+        if (sa) starActive = true;
 
-        // Deteksi gem expired: count turun dari sebelumnya
+        // Deteksi gem expired: count turun
         if (currentCount < lastEmpoweredCount) {
           consola.info(
             { before: lastEmpoweredCount, after: currentCount },
@@ -157,27 +131,28 @@ function startFarming(client, channel, options) {
           skipInventory = false;
         }
 
+        // Deteksi star expired: sebelumnya aktif, sekarang nggak
+        if (starActive && !sa) {
+          consola.info("⚠️ Star expired terdeteksi — akan re-check inventory");
+          starActive = false;
+          skipInventory = false;
+        }
+
         lastEmpoweredCount = currentCount;
 
-        // Hanya buka inventory kalau memang perlu (slot < 4 DAN belum di-skip)
         if (currentCount < 4 && !skipInventory) {
           await equipEmptySlots(empoweredSlots);
-          skipInventory = true; // jangan buka lagi kecuali ada gem expired
+          skipInventory = true;
         } else if (currentCount === 4) {
           consola.debug("Semua 4 slot empowered — skip inventory");
           skipInventory = true;
-        } else {
-          consola.debug(
-            { count: currentCount },
-            "Slot belum penuh tapi inventory sudah di-skip (nunggu gem expired)",
-          );
         }
       }
     } catch (err) {
       consola.error({ msg: messages[0], err: err.message }, "Gagal mengirim owoh");
     }
 
-    // Kirim sisa pesan (owob, dll)
+    // Kirim sisa pesan
     for (let i = 1; i < messages.length; i++) {
       if (stopped) return;
       try {
@@ -194,17 +169,13 @@ function startFarming(client, channel, options) {
     const nextDelay = getRandomDelay();
     const nextAt = new Date(Date.now() + nextDelay);
     consola.info(
-      {
-        nextDelayMs: nextDelay,
-        nextAt: formatTime(nextAt),
-        cycle: cycleCount,
-      },
+      { nextDelayMs: nextDelay, nextAt: formatTime(nextAt), cycle: cycleCount },
       "Siklus berikutnya",
     );
     timer = setTimeout(loop, nextDelay);
   };
 
-  consola.info("Farming dimulai! (auto-equip gem + deteksi empowered)");
+  consola.info("Farming dimulai! (auto-equip gem + star + lootbox)");
   loop();
 
   return { stop };

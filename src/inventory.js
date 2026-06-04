@@ -2,10 +2,11 @@ const { consola } = require("./logger");
 
 /**
  * Gem ID ranges per slot (ref: owobot.fandom.com — Gems ids 51–57 & 65–78).
- * Slot  1: 51–57
- * Slot  2: 58–64
- * Slot  3: 65–71
- * Slot  4: 72–78
+ * Slot  1: 51–57 (hunting)
+ * Slot  2: 58–64 (empowering)
+ * Slot  3: 65–71 (lucky)
+ * Slot  4: 72–78 (special)
+ * Star:       79–85 (single slot, equipped via `owo use`)
  */
 const GEM_IDS = new Set([
   51,
@@ -37,6 +38,9 @@ const GEM_IDS = new Set([
   77,
   78, // slot 4
 ]);
+
+/** Star IDs — single slot, 7 tiers. Equipped via `owo use <id>` (not `owo equip`). */
+const STAR_IDS = new Set([79, 80, 81, 82, 83, 84, 85]);
 
 /**
  * Rarity ranking — semakin tinggi, semakin kuat.
@@ -73,19 +77,19 @@ function rarityFromName(emojiName) {
 }
 
 /**
- * Kirim "owo inv", tangkap response, kembalikan best gem per slot + deteksi lootbox.
+ * Kirim "owo inv", tangkap response, kembalikan best gem per slot + deteksi lootbox + best star.
  *
  * @param {import("discord.js-selfbot-v13").Client} client
  * @param {import("discord.js-selfbot-v13").TextChannel} channel
  * @param {number} timeoutMs
- * @returns {Promise<{ bestPerSlot: Map<number, number>, hasLootbox: boolean }>}
+ * @returns {Promise<{ bestPerSlot: Map<number, number>, hasLootbox: boolean, bestStar: number|null }>}
  */
 function fetchInventory(client, channel, timeoutMs = 8_000) {
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       client.removeListener("messageCreate", handler);
       consola.warn("Timeout — tidak ada response dari owo inv");
-      resolve({ bestPerSlot: new Map(), hasLootbox: false });
+      resolve({ bestPerSlot: new Map(), hasLootbox: false, bestStar: null });
     }, timeoutMs);
 
     const handler = (msg) => {
@@ -102,14 +106,18 @@ function fetchInventory(client, channel, timeoutMs = 8_000) {
       clearTimeout(timer);
       client.removeListener("messageCreate", handler);
 
-      const bestPerSlot = parseBestGems(msg.content);
+      const { bestPerSlot, bestStar } = parseBestGems(msg.content);
       const hasLootbox = hasLootboxCheck(msg.content);
 
       consola.info(
-        { bestPerSlot: [...bestPerSlot].map(([s, id]) => `slot${s}=${id}`), hasLootbox },
+        {
+          bestPerSlot: [...bestPerSlot].map(([s, id]) => `slot${s}=${id}`),
+          bestStar,
+          hasLootbox,
+        },
         "Inventory diproses",
       );
-      resolve({ bestPerSlot, hasLootbox });
+      resolve({ bestPerSlot, hasLootbox, bestStar });
     };
 
     client.on("messageCreate", handler);
@@ -117,24 +125,18 @@ function fetchInventory(client, channel, timeoutMs = 8_000) {
       clearTimeout(timer);
       client.removeListener("messageCreate", handler);
       consola.error(err, "Gagal mengirim owo inv");
-      resolve({ bestPerSlot: new Map(), hasLootbox: false });
+      resolve({ bestPerSlot: new Map(), hasLootbox: false, bestStar: null });
     });
   });
 }
 
 /**
- * Parse inventory text → ekstrak setiap (id, emoji_name) pair,
- * lalu pilih gem terkuat per slot.
- *
- * Format raw:
- *   `052`<:ugem1:492572122514980864>³    `053`<:rgem1:492572122888011776>¹
+ * Parse inventory text → ekstrak best gem per slot + best star.
  *
  * @param {string} content
- * @returns {Map<number, number>} Map<slot, bestGemId>
+ * @returns {{ bestPerSlot: Map<number, number>, bestStar: number|null }}
  */
 function parseBestGems(content) {
-  // Ekstrak semua pasangan: ID + emoji name
-  // Pattern: `NNN`<:NAME:ID_NUM>  (atau <a:NAME:ID_NUM>)
   const pairRegex = /`(\d{2,3})`<a?:(\w+):\d+>/g;
   const pairs = [];
   let m;
@@ -144,38 +146,51 @@ function parseBestGems(content) {
 
   consola.debug({ pairCount: pairs.length }, "Pairs diekstrak dari inventory");
 
-  // Filter hanya gem, kelompokkan per slot
-  const bySlot = new Map(); // slot → { id, rank }
+  // Gem: kelompokkan per slot
+  const bySlot = new Map();
+
+  // Star: pilih yang tertinggi
+  let bestStarId = null;
+  let bestStarRank = -1;
 
   for (const { id, emoji } of pairs) {
-    if (!GEM_IDS.has(id)) continue;
+    if (GEM_IDS.has(id)) {
+      const slot = slotFromName(emoji);
+      const rarityChar = rarityFromName(emoji);
+      if (slot === null || rarityChar === null) continue;
 
-    const slot = slotFromName(emoji);
-    const rarityChar = rarityFromName(emoji);
-    if (slot === null || rarityChar === null) continue;
+      const rank = RARITY_RANK[rarityChar] ?? -1;
+      const existing = bySlot.get(slot);
+      if (!existing || rank > existing.rank) {
+        bySlot.set(slot, { id, rank, rarity: rarityChar });
+      }
+    } else if (STAR_IDS.has(id)) {
+      const rarityChar = rarityFromName(emoji);
+      if (rarityChar === null) continue;
 
-    const rank = RARITY_RANK[rarityChar] ?? -1;
-
-    const existing = bySlot.get(slot);
-    if (!existing || rank > existing.rank) {
-      bySlot.set(slot, { id, rank, rarity: rarityChar });
+      const rank = RARITY_RANK[rarityChar] ?? -1;
+      if (rank > bestStarRank) {
+        bestStarRank = rank;
+        bestStarId = id;
+      }
     }
   }
 
-  // Konversi ke Map<slot, id>
   const bestPerSlot = new Map();
-  for (const [slot, { id, rarity }] of bySlot) {
+  for (const [slot, { id }] of bySlot) {
     bestPerSlot.set(slot, id);
-    consola.debug({ slot, id, rarity }, "Gem terbaik per slot");
+    consola.debug({ slot, id }, "Gem terbaik per slot");
   }
 
-  return bestPerSlot;
+  if (bestStarId !== null) {
+    consola.debug({ bestStarId, rarity: bestStarRank }, "Best star ditemukan");
+  }
+
+  return { bestPerSlot, bestStar: bestStarId };
 }
 
 /**
  * Cek apakah ada lootbox (ID 49 atau 50) di inventory.
- *
- * Format: `049`<:floot:...> atau `050`<:box:...>
  *
  * @param {string} content
  * @returns {boolean}
@@ -203,24 +218,44 @@ async function openLootboxes(channel) {
 }
 
 /**
- * Cek inventory → equip gem + buka lootbox.
+ * Cek inventory → equip gem + star + buka lootbox.
  *
  * @param {import("discord.js-selfbot-v13").Client} client
  * @param {import("discord.js-selfbot-v13").TextChannel} channel
  * @param {Set<number>} [empoweredSlots] - Slot yang sudah terisi (dari response owoh)
- * @returns {Promise<string[]>} Array ID gem yang berhasil di-equip
+ * @param {boolean} [starActive] - Apakah star sudah aktif (dari response owoh)
+ * @returns {Promise<string[]>} Array item yang berhasil di-equip
  */
-async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
+async function checkAndEquipGems(
+  client,
+  channel,
+  empoweredSlots = new Set(),
+  starActive = false,
+) {
   consola.info(
-    { missing: [1, 2, 3, 4].filter((s) => !empoweredSlots.has(s)) },
+    { missing: [1, 2, 3, 4].filter((s) => !empoweredSlots.has(s)), starActive },
     "🔍 Memeriksa inventory...",
   );
 
-  const { bestPerSlot, hasLootbox } = await fetchInventory(client, channel);
+  const { bestPerSlot, hasLootbox, bestStar } = await fetchInventory(client, channel);
 
   // ── Buka lootbox kalau ada ──
   if (hasLootbox) {
     await openLootboxes(channel);
+  }
+
+  // ── Equip star (pakai owo use) ──
+  if (bestStar !== null && !starActive) {
+    try {
+      consola.info({ id: bestStar }, "🌟 Meng-equip star...");
+      await channel.send(`owo use ${bestStar}`);
+      consola.success({ id: bestStar }, "🌟 Star di-equip!");
+      await delay(2_000);
+    } catch (err) {
+      consola.error({ id: bestStar, err: err.message }, "Gagal equip star");
+    }
+  } else if (bestStar !== null && starActive) {
+    consola.debug({ id: bestStar }, "Star sudah aktif — skip");
   }
 
   // ── Equip gem ──
@@ -229,7 +264,6 @@ async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
     return [];
   }
 
-  // Hanya equip slot yang belum empowered
   const slots = [...bestPerSlot.keys()]
     .filter((s) => !empoweredSlots.has(s))
     .sort((a, b) => a - b);
@@ -240,13 +274,14 @@ async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
   }
 
   consola.info(
-    { count: slots.length, slots: slots.map((s) => `slot${s}=${bestPerSlot.get(s)}`) },
+    {
+      count: slots.length,
+      slots: slots.map((s) => `slot${s}=${bestPerSlot.get(s)}`),
+    },
     `${slots.length} slot akan di-equip`,
   );
 
   const equipped = [];
-
-  // Multi-equip: kirim semua ID dalam 1 command
   const multiequipIds = slots.map((slot) => bestPerSlot.get(slot));
   const multiequipCmd = `owo equip ${multiequipIds.join(" ")}`;
 
@@ -269,15 +304,15 @@ async function checkAndEquipGems(client, channel, empoweredSlots = new Set()) {
 }
 
 /**
- * Parse response "owoh" → ekstrak slot mana yang sudah empowered.
- *
- * Format: "...empowered by <:mgem4:...>`[505/525]` <:ugem1:...>`[12/25]` !"
+ * Parse response "owoh" → ekstrak gem slots + apakah star sudah aktif.
  *
  * @param {string} content - Content dari response owoh
- * @returns {Set<number>} Set of slot numbers yang empowered
+ * @returns {{ slots: Set<number>, starActive: boolean }}
  */
-function parseEmpoweredSlots(content) {
+function parseEmpowered(content) {
   const slots = new Set();
+  let starActive = false;
+
   // Match gem emoji: <:ugem1:ID> atau <a:mgem4:ID>
   const gemRegex = /<(a?):(\w*gem\d):\d+>/gi;
   let m;
@@ -285,10 +320,18 @@ function parseEmpoweredSlots(content) {
     const slot = slotFromName(m[2]);
     if (slot !== null) slots.add(slot);
   }
-  return slots;
+
+  // Cek star di empowered line: <a:lstar:ID> atau <:cstar:ID>
+  const starRegex = /<(a?):(\w*star):\d+>/gi;
+  while ((m = starRegex.exec(content)) !== null) {
+    starActive = true;
+    break;
+  }
+
+  return { slots, starActive };
 }
 
 /** Promise-based delay */
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-module.exports = { checkAndEquipGems, parseEmpoweredSlots, GEM_IDS };
+module.exports = { checkAndEquipGems, parseEmpowered, GEM_IDS, STAR_IDS, RARITY_RANK };
