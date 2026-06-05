@@ -4,14 +4,13 @@
   "description": "Discord farming bot",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "lint": "eslint src/ scripts/",
-    "lint:fix": "eslint src/ scripts/ --fix",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run lint",
-    "fix": "npm run format && npm run lint:fix",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "bun src/index.js",
+    "lint": "bunx eslint src/ scripts/",
+    "lint:fix": "bunx eslint src/ scripts/ --fix",
+    "format": "bunx prettier --write .",
+    "format:check": "bunx prettier --check .",
+    "check": "bun run format:check && bun run lint",
+    "fix": "bun run format && bun run lint:fix"
   },
   "keywords": [],
   "author": "",
