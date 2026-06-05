@@ -2,11 +2,11 @@
  * Test script: kirim "owo inv", capture raw response,
  * lalu parse pakai parseBestGems() — pilih gem terkuat per slot + star.
  *
- * Usage: node src/test-inv.js
+ * Usage: node scripts/test-inv.js
  */
 require("dotenv").config();
 const { Client } = require("discord.js-selfbot-v13");
-const { GEM_IDS, STAR_IDS, RARITY_RANK } = require("./inventory");
+const { GEM_IDS, STAR_IDS, RARITY_RANK } = require("../src/inventory");
 
 const { DISCORD_TOKEN, SERVER_ID, CHANNEL_ID } = process.env;
 
