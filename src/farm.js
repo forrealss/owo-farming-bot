@@ -38,6 +38,8 @@ function startFarming(client, channel, options) {
   let lastEmpoweredCount = -1;
   let skipInventory = false;
   let starActive = false; // tracked from owoh response
+  let lastEquipAttemptMs = 0;
+  const EQUIP_COOLDOWN_MS = 60_000; // 1 menit cooldown retry equip
 
   const formatTime = (date) => date.toLocaleString();
   const getRandomDelay = () =>
@@ -101,7 +103,8 @@ function startFarming(client, channel, options) {
         if (
           msg.reference?.messageId === sentMsg.id ||
           msg.content.includes("empowered") ||
-          msg.content.includes("hunt is")
+          msg.content.includes("hunt is") ||
+          msg.author.username === "OwO"
         ) {
           owohContent = msg.content;
         }
@@ -140,7 +143,16 @@ function startFarming(client, channel, options) {
 
         lastEmpoweredCount = currentCount;
 
-        if (currentCount < 4 && !skipInventory) {
+        if (currentCount === 0) {
+          // 0 gems empowered — selalu coba equip dengan cooldown
+          const now = Date.now();
+          if (now - lastEquipAttemptMs >= EQUIP_COOLDOWN_MS) {
+            consola.info("0 gems empowered — mencoba equip dari inventory...");
+            await equipEmptySlots(empoweredSlots);
+            lastEquipAttemptMs = now;
+          }
+          // Jangan set skipInventory — terus retry sampai gems ter-equip
+        } else if (currentCount < 4 && !skipInventory) {
           await equipEmptySlots(empoweredSlots);
           skipInventory = true;
         } else if (currentCount === 4) {
